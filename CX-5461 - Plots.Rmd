@@ -1,0 +1,941 @@
+---
+title: "CX-5461 Classification (Plots)"
+author: "Connor Moore"
+date: "12/9/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+```
+
+
+#Create Data Frame
+```{r Create Data Frame}
+
+basedata = read.csv("C:/Users/cmoor/OneDrive/Documents/1PSU/BME 497/Research/Alldataeumyc.csv") # Load data in
+basedata = basedata[-c(1074,1075,1076),] # Get rid of wrong CX measurements
+
+```
+
+
+#Preparing Data
+```{r Preparing Data}
+# Getting rid of dates with bad controls
+
+basedata$date = as.character(basedata$date)
+# Set dates as characters
+counter = 1
+# Set counter to 1
+storage = matrix(nrow = nrow(basedata), ncol  = 1) # Create a storage matrix for bad dates
+
+
+# QC for dates with LD of control drug over 92 or below 75
+for (i in 1:nrow(basedata)){ # Run for each observation
+  if (basedata$drug[i] == "5-Fluorouracil" | basedata$drug[i] == "doxorubicin" | basedata$drug[i] == "cisplatin"){ # Check for a control drug
+    if (basedata$LD[i] < 75 || basedata$LD[i] > 92){ # Check if in QC Range
+      storage[counter, 1] = basedata$date[i] # Store date
+      counter = counter + 1 # Increase counter
+    } 
+  }
+}
+# Store dates where QC drugs are out of range
+
+storage = storage[!is.na(storage)] # Get rid of NAs
+storage = as.data.frame(storage, stringsAsFactors = F) # Convert to a data frame
+storage = as.data.frame(storage[!duplicated(storage),1],stringsAsFactors = F)  # Get rid of duplicates
+
+
+ QCData = basedata  # Create a new data frame for the QCed data
+ 
+for (i in 1:nrow(storage)){
+  QCData = QCData[-grep(storage[i,1],QCData$date),]
+}
+ # Get rid of all experiments from the dates that fall out of the QC range
+ 
+ 
+ 
+ 
+ # Global removal of LD below 75 and above 92%
+storage = data.frame("Idx", stringsAsFactors = F) # Create another storage data frame for indices of drugs outside of QC range
+
+for (i in 1:nrow(QCData)){ # Run for each observation
+  if (QCData$LD[i] > 92 || QCData$LD[i] < 75){ # Check if outside QC range
+    storage[i,1] = i # Store index if outside
+  } else {
+    storage[i,1] = NA # Store NA if inside
+  }
+}
+# Store indexs for any trial with over 92 or under 75
+
+storage = as.matrix(as.numeric(storage[!is.na(storage)])) # Get rid of NAs
+QCData = QCData[-storage,]
+# Get rid of that data
+
+
+# I chose 75 to 92 for my range because the range in the original paper was 80 to 90, but that leaves us with only 3 CX observations, so I changed it to 75 to 92 so I could salvage 2 more CX runs without drastically changing the original range. This also gives more observations with which a model can be built, so I believe this change is reasonable.
+
+
+# Converting NAs to means
+sum = 0
+nacounter = 0
+# Set counters
+QCData$drug = as.character(QCData$drug)
+# set drug names as characters
+
+for (i in 2:ncol(QCData)){
+  for (j in 1:nrow(QCData)){
+    sum = 0
+    nacounter = 0 # Reset counters
+    if (is.na(QCData[j,i]) == T){ # Is an observation NA
+      for (k in 1:length(grep(QCData[j,1], QCData$drug))){ # How many of that drug are in the data
+        if (is.na(QCData[grep(QCData[j,1], QCData$drug)[k],i]) == T){
+          nacounter = nacounter + 1 # See how many NAs for that drug
+        } else {
+        sum = sum + as.numeric(QCData[grep(QCData[j,1], QCData$drug)[k],i]) # Sum those drugs that aren't NA
+        }
+      }
+      QCData[j,i] = sum/(length(grep(QCData[j,1], QCData$drug))-nacounter) # Take the average and replace the NA
+    }
+  }
+} # Convert the NAs to means respective to drug
+# There are other ways to deal with NAs, but I believe this method is reasonable.
+
+# I did this after data removal to avoid influence from "bad" observations.
+
+
+
+# Separating CX
+CX5461 = QCData[grep("CX-5461", QCData$drug),]
+QCData = QCData[-grep("CX-5461", QCData$drug),] # Separate CX5461 from rest of data
+
+
+
+# I originally tried detrending, but it increased the test error, and I did not see any use for it.
+```
+
+
+#Classifiers
+```{r Classifiers}
+DNAd = data.frame(c("DNA Damage"), stringsAsFactors = F) # Create binary DNA damage df
+storage = data.frame("Idx", stringsAsFactors = F) # Store indexes of noncatagorized drugs
+
+for (i in 1:nrow(QCData)){
+  if (QCData$drug[i] == "doxorubicin" | QCData$drug[i] == "Mitoxantrone" | QCData$drug[i] == "Epirubicin" | QCData$drug[i] == "Daunorubicin" | QCData$drug[i] == "6-Thioguanine" | QCData$drug[i] == "Camptothecin" | QCData$drug[i] == "Topotecan" | QCData$drug[i] == "cisplatin" | QCData$drug[i] == "Chlorambucil" | QCData$drug[i] == "MitomycinC" | QCData$drug[i] == "Carmustine" | QCData$drug[i] == "Lomustine"| QCData$drug[i] == "Busulfan"| QCData$drug[i] == "carboplatin"){
+    DNAd[i,1] = "Yes" # Classify drugs as DNA damge
+    storage[i,1] = NA
+    
+  } else if (QCData$drug[i] == "vincristine" | QCData$drug[i] == "vinblastine" | QCData$drug[i] == "Vinorelbine" | QCData$drug[i] == "Taxol" | QCData$drug[i] == "Docetaxel" | QCData$drug[i] == "Cabazitaxel" | QCData$drug[i] == "SAHA" | QCData$drug[i] == "Zebularine" | QCData$drug[i] == "Scriptaid" | QCData$drug[i] == "ActinomycinD" | QCData$drug[i] == "Rapamycin" | QCData$drug[i] == "Puromycin" | QCData$drug[i] == "Cyclohexamide" | QCData$drug[i] == "5-Fluorouracil" | QCData$drug[i] == "Gemcitabine" | QCData$drug[i] == "Hydroxyurea" | QCData$drug[i] == "Methotrexate" | QCData$drug[i] == "Pemetrexed") {
+    DNAd[i,1] = "No" # Classify drugs that are not
+    storage[i,1] = NA
+    
+  } else {
+    DNAd[i,1] = NA
+    storage[i,1] = i # Store indexes of unclassified drugs
+  }
+} # Catagorize drugs
+
+DNAdCX = data.frame("DNA Damage Y/N", stringsAsFactors = F)
+DNAdCX[1:5,1] = "Yes"
+colnames(DNAdCX) = "DNA Damage Y/N" # Give CX their DNA damage class
+
+
+storage = as.matrix(as.numeric(storage[!is.na(storage)])) # Get rid of NAs
+QCData = QCData[-storage,] # Get rid of unclassified drugs
+DNAd = as.data.frame(DNAd[-storage,]) # Create a Yes/No column for DNA damage
+# This is required to make models below.
+
+colnames(DNAd) = c("DNA Damage Y/N")
+# Add column name
+
+
+
+# Create binary data frame for Topoisomerase II Poison
+TopoII = data.frame(c("TopoII"), stringsAsFactors = F) # Create TopoII data frame
+
+for (i in 1:nrow(QCData)){ # Run for all observations
+  if (QCData$drug[i] == "doxorubicin" | QCData$drug[i] == "Mitoxantrone" | QCData$drug[i] == "Epirubicin" | QCData$drug[i] == "Daunorubicin"){
+    TopoII[i,1] = "Yes" # Plug in Yes if TopoII
+  } else {
+    TopoII[i,1] = "No" # No if not
+  }
+}
+colnames(TopoII) = c("TopoII Y/N")
+# Create Yes/No data frame for Topoisomerase II Poison
+
+TopoIICX = data.frame("TopoII Y/N", stringsAsFactors = F)
+TopoIICX[1:5,1] = "Yes"
+colnames(TopoIICX) = "TopoII Y/N" # Give CX it's TopoII Class
+
+QCData = data.frame(QCData,TopoII, DNAd)
+QCData$TopoII.Y.N = as.factor(QCData$TopoII.Y.N)
+# Combining data sets
+
+CX5461 = data.frame(CX5461, DNAdCX, TopoIICX)
+CX5461[,12] = as.factor(CX5461[,12])
+CX5461[,13] = as.factor(CX5461[,13]) # Combine CX data sets
+
+
+# Assigning each drug a classifier
+Classifiers = data.frame("Classifiers", stringsAsFactors = F) # Create classifier data frame
+
+for (i in 1:nrow(QCData)){ # Run for all observations
+  
+  if (QCData$drug[i] == "doxorubicin" | QCData$drug[i] == "Mitoxantrone" | QCData$drug[i] == "Epirubicin" | QCData$drug[i] == "Daunorubicin"){ #If TopoII
+    
+    Classifiers[i,1] = "Topoisomerase II Poison" 
+    
+  } else if (QCData$drug[i] == "6-Thioguanine" | QCData$drug[i] == "Camptothecin" | QCData$drug[i] == "Topotecan"){ # If SSB
+    
+    Classifiers[i,1] = "SSB"
+    
+  } else if (QCData$drug[i] == "cisplatin" | QCData$drug[i] == "Chlorambucil" | QCData$drug[i] == "MitomycinC" | QCData$drug[i] == "Carmustine" | QCData$drug[i] == "Lomustine"| QCData$drug[i] == "Busulfan"| QCData$drug[i] == "carboplatin"){ # If Crosslink
+    
+    Classifiers[i,1] = "Crosslink"
+    
+  } else if (QCData$drug[i] == "vincristine" | QCData$drug[i] == "vinblastine" | QCData$drug[i] == "Vinorelbine" | QCData$drug[i] == "Taxol" | QCData$drug[i] == "Docetaxel" | QCData$drug[i] == "Cabazitaxel"){ # If MSD
+    
+    Classifiers[i,1] = "MSD"
+    
+  } else if (QCData$drug[i] == "SAHA" | QCData$drug[i] == "Zebularine" | QCData$drug[i] == "Scriptaid"){ # If Epigenic
+    
+    Classifiers[i,1] = "Epigenic"
+    
+  } else if (QCData$drug[i] == "ActinomycinD" | QCData$drug[i] == "Puromycin"|  QCData$drug[i] == "Rapamycin" | QCData$drug[i] == "Cyclohexamide"){ # If CDD
+    
+    Classifiers[i,1] = "CDD"
+    
+  } else if (QCData$drug[i] == "5-Fluorouracil" | QCData$drug[i] == "Gemcitabine" | QCData$drug[i] == "Hydroxyurea" | QCData$drug[i] == "Methotrexate" | QCData$drug[i] == "Pemetrexed"){ # If NB
+    
+    Classifiers[i,1] = "NB"
+    
+  }
+}
+# Assigned each drug their classifier
+
+colnames(Classifiers) = c("Classifiers")
+QCData = data.frame(QCData, Classifiers)
+QCData[,14] = as.factor(QCData[,14])
+# Combined data frames
+
+ClassifiersCX = data.frame("Classifiers", stringsAsFactors = F)
+ClassifiersCX[1:5,1] = "CX5461"
+colnames(ClassifiersCX) = "Classifiers" # Create CX class
+
+CX5461 = data.frame(CX5461, ClassifiersCX) # Combine CX data frames
+
+```
+
+
+# TP, FP, TN, FN
+```{r TP, FP, TN, FN}
+library("ggplot2")
+library(tidyverse)
+library(caret)
+library(nnet)
+library(MASS)
+library(class)
+# LOOCV
+        # Logistic Regression
+logdoxerror = data.frame(stringsAsFactors = F) # Create data frame for TRUE/FALSE prediction for dox
+lognonerror = data.frame(stringsAsFactors = F) # Create data frame for TRUE/FALSE prediction for nonTopoIIs
+counterdox = 1
+counternon = 1 # Set my counters
+
+for (i in 1:nrow(QCData)){ # Leave each drug out
+  
+  model = nnet::multinom(Classifiers ~ p53 + chk2 + atr + chk1 + atx + dnapk + bok + bim, data = QCData[-i,]) # Run logistic regression
+  predicted.classes = model %>% predict(QCData[i,]) # Predict left out drug
+  
+  if (QCData$drug[i] == "doxorubicin") { # Check TP and FN for dox
+    
+    logdoxerror[counterdox,1] = predicted.classes == "Topoisomerase II Poison" # Store either correct (TRUE) or incorrect (FALSE) in the premade data frame
+    counterdox = counterdox + 1 # Increase the counter
+    
+  } else if (QCData$Classifiers[i] != "Topoisomerase II Poison") { # Check TN and FP for nonTopoIIs
+    
+    lognonerror[counternon,1] = predicted.classes != "Topoisomerase II Poison"# Store either correct (TRUE) or incorrect (FALSE) in the premade data frame
+    counternon = counternon + 1 # Increase the counter
+    
+  }
+}
+#Sorry couldn't figure out how to get rid of output
+
+logdoxerror = lapply(logdoxerror, as.numeric) 
+lognonerror = lapply(lognonerror, as.numeric) # Convert from logical to numeric
+
+ErrorPN = data.frame("TP","FN","TN","FP", stringsAsFactors = F) # Create a data frame for the error rates
+
+ErrorPN[1,1] = mean(logdoxerror$V1) # TP
+ErrorPN[1,2] = 1 - mean(logdoxerror$V1) # FN
+ErrorPN[1,3] = mean(lognonerror$V1) # TN
+ErrorPN[1,4] = 1 - mean(lognonerror$V1) # FP
+
+
+
+        # LDA
+ldadoxerror = data.frame(stringsAsFactors = F) # Create data frame for TRUE/FALSE prediction for dox
+ldanonerror = data.frame(stringsAsFactors = F) # Create data frame for TRUE/FALSE prediction for nonTopoIIs
+counterdox = 1
+counternon = 1 # Set my counter
+
+for (i in 1:nrow(QCData)){ # Leave each drug out
+  
+ multilda = lda(Classifiers ~ p53 + chk2 + atr + chk1 + atx + dnapk + bok + bim, data = QCData[-i,]) # Run lda
+ldapred = predict(multilda, QCData[i,]) # Try to predict class of drug
+multildaclass = ldapred$class # Separate the class from the list
+
+  
+  if (QCData$drug[i] == "doxorubicin") { # Check TP and FN for dox
+    
+    ldadoxerror[counterdox,1] = multildaclass == "Topoisomerase II Poison"# Store either correct (TRUE) or incorrect (FALSE) in the premade data frame
+    counterdox = counterdox + 1 #Increase counter
+    
+  } else if (QCData$Classifiers[i] != "Topoisomerase II Poison") { # Check TN and FP for nonTopoIIs
+    
+    ldanonerror[counternon,1] = multildaclass != "Topoisomerase II Poison"# Store either correct (TRUE) or incorrect (FALSE) in the premade data frame
+    counternon = counternon + 1 # Increase counter
+    
+  }
+}
+
+ldadoxerror = lapply(ldadoxerror, as.numeric)
+ldanonerror = lapply(ldanonerror, as.numeric) # Convert from logical to numeric
+
+ErrorPN[2,1] = mean(ldadoxerror$V1) # TP
+ErrorPN[2,2] = 1 - mean(ldadoxerror$V1) # FN
+ErrorPN[2,3] = mean(ldanonerror$V1) # TN
+ErrorPN[2,4] = 1 - mean(ldanonerror$V1) # FP
+
+
+        #KNN
+knndoxerror = data.frame(stringsAsFactors = F)# Create data frame for TRUE/FALSE prediction for dox
+knnnonerror = data.frame(stringsAsFactors = F)# Create data frame for TRUE/FALSE prediction for nonTopoIIs
+counterdox = 1
+counternon = 1 # Set counters
+
+  for (i in 1:nrow(QCData)){ # Leave out each drug
+  
+  knntrain = as.data.frame(knn(QCData[-i,4:11],QCData[i,4:11], QCData[-i, 14], k = 1, prob = F, use.all = FALSE)) # Run knn for k = 1 (used in multiclass model)
+
+  
+    if (QCData$drug[i] == "doxorubicin") {
+    
+      knndoxerror[counterdox,1] = knntrain == "Topoisomerase II Poison" # Store either correct (TRUE) or incorrect (FALSE) in the premade data frame
+      counterdox = counterdox + 1
+    
+    } else if (QCData$Classifiers[i] != "Topoisomerase II Poison") {
+    
+      knnnonerror[counternon,1] = knntrain != "Topoisomerase II Poison" # Store either correct (TRUE) or incorrect (FALSE) in the premade data frame
+      counternon = counternon + 1
+    
+    }
+  }
+
+
+knndoxerror = lapply(knndoxerror[1:(nrow(knndoxerror)-1), 1], as.numeric)
+knnnonerror = lapply(knnnonerror[1:(nrow(knnnonerror)-1), 1], as.numeric) # Convert from logical to numeric
+
+ErrorPN[3,1] = mean(as.numeric(knndoxerror)) # TP
+ErrorPN[3,2] = 1 - mean(as.numeric(knndoxerror)) # FN
+ErrorPN[3,3] = mean(as.numeric(knnnonerror)) # TN
+ErrorPN[3,4] = 1 - mean(as.numeric(knnnonerror)) # FP
+
+
+ErrorPN = cbind(ErrorPN, c("Logistic Regression", "LDA","KNN")) # Add a model column for ggplot
+
+for (i in 1:4){
+ErrorPN[,i] = as.numeric(ErrorPN[,i]) # Convert TP, FN, TN, and FP to numeric
+}
+
+rownames(ErrorPN) = c("Logistic Regression", "LDA", "KNN")
+colnames(ErrorPN) = c("TruePositive", "FalseNegative", "TrueNegative", "FalsePositive", "Names") # Label data frame
+
+
+# Create plots to visualize error rates
+# True Positive
+ggplot(data = ErrorPN, aes(x = Names, y = TruePositive, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Red', 'Green', 'Blue')) +
+  labs(title = "True Positive Rate for Doxorubicin", x = "Models", y = "Percentage of Correctly Classified Drug")+
+  coord_cartesian(ylim=c(0, 1.1)) + 
+    scale_y_continuous(breaks=seq(0, 1.1, .1)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(TruePositive, digits = 3)), vjust=-0.3, size=6)+
+   theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+#KNN and LDA tied for best
+
+
+# False Negative
+ggplot(data = ErrorPN, aes(x = Names, y = FalseNegative, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Red', 'Green', 'Blue')) +
+  labs(title = "False Negative Rate for Doxorubicin", x = "Models", y = "Percentage of Incorrectly Classified Drug")+
+  coord_cartesian(ylim=c(0, 1.1)) + 
+    scale_y_continuous(breaks=seq(0, 1.1, .1)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(FalseNegative, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+# KNN and LDA tied for best
+
+
+# True Negative
+ggplot(data = ErrorPN, aes(x = Names, y = TrueNegative, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Red', 'Green', 'Blue')) +
+  labs(title = "True Negative Rate for Non-Topo II Drugs", x = "Models", y = "Percentage of Correctly Classified Drug")+
+  coord_cartesian(ylim=c(0, 1.1)) + 
+    scale_y_continuous(breaks=seq(0, 1.1, 0.1)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(TrueNegative, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+# KNN and LogReg tied for best
+
+
+# False Positive
+ggplot(data = ErrorPN, aes(x = Names, y = FalsePositive, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Red', 'Green', 'Blue')) +
+  labs(title = "False Positive Rate for Non-Topo II Drugs", x = "Models", y = "Percentage of Incorrectly Classified Drug")+
+  coord_cartesian(ylim=c(0, 1.1)) + 
+    scale_y_continuous(breaks=seq(0, 1.1, 0.1)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(FalsePositive, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+# KNN and LogReg tied for best
+
+#KNN appears to be the best model
+
+```
+
+
+#Visualization
+```{r Visiualization}
+# PCA
+combined = rbind(QCData, CX5461) # Put CX back in the data frame
+predictors = combined[,-(1:3)]
+predictors = predictors[,-(9:11)] # Isolate predictors
+
+PC = prcomp(predictors, scale. = T) # Do PCA with scaling
+drugdat5=data.frame(PC$x,combined$Classifiers) # Create data frame for ggplot
+
+
+Classifier = combined[,14] # Create classifier vector
+
+
+varex = data.frame(stringsAsFactors = F) # Variance Explained data frame
+
+for (i in 1:length(PC$sdev)){
+  varex[i,1] = PC$sdev[i]/sum(PC$sdev) # Find percent variance explained
+}
+
+varex = cbind(varex, c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")) # Add a labels column
+
+rownames(varex) = c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+colnames(varex) = c("PVE","Names") # Label data frame
+
+
+# plot variance explained
+ggplot(data = varex, aes(x = Names, y = PVE, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue')) +
+  labs(title = "Percent Variance Explained (All Drugs)", x = "Primary Components", y = "Percentage of Variance Explained")+
+  coord_cartesian(ylim=c(0, .3)) + 
+    scale_y_continuous(breaks=seq(0, .3, 0.05)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(PVE, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+
+
+# Plot PCA by classifier
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Classifier))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+ 
+  ggtitle("PCA Scaled Data")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = 'Classifications')
+# CX groups with TopoII
+
+
+# Plot TopoIIs and CX separated
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Classifier))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  scale_color_manual(values = c("black","black", "black", "black", "black", "black", "blue", "red")) +
+  ggtitle("PCA Labeled") +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = "Classifications")
+# This plot much more clearly shows that CX groups with TopoII in PC space. Let's see which drug it seems to group with.
+
+
+# Plot by drug
+Drug = combined[,1]
+drugdat5=data.frame(PC$x,combined$drug)
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  ggtitle("PCA All Drugs")+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = "Classifications")
+
+
+
+# Average observation for all drugs
+DrugVec = c("doxorubicin", "Mitoxantrone", "Epirubicin", "Daunorubicin", "6-Thioguanine", "Camptothecin", "Topotecan", "cisplatin", "Chlorambucil", "MitomycinC", "Carmustine", "Lomustine", "Busulfan", "carboplatin", "vincristine", "vinblastine", "Vinorelbine", "Taxol", "Docetaxel", "Cabazitaxel", "SAHA", "Zebularine", "Scriptaid", "ActinomycinD", "Rapamycin", "Puromycin", "Cyclohexamide", "5-Fluorouracil", "Gemcitabine", "Hydroxyurea", "Methotrexate", "Pemetrexed", "CX-5461") # Create vector of all drug names
+
+avgobs = data.frame(stringsAsFactors = F) # Create storage data frame
+
+for (i in 1:length(DrugVec)){
+  
+  avgobs[i,1] = DrugVec[i] # Store which drug is on the row
+  
+  for (j in 4:11){
+    avgobs[i,j-2] = mean(combined[grep(DrugVec[i], combined$drug), j]) # Find averages for each drug
+  }
+}
+
+avgobs = na.omit(avgobs) # Get rid of drugs that have no observations
+Drug = avgobs[,1] # Make a drug vector
+avgobspred = avgobs[,-1] # Isolate predictors
+
+PC = prcomp(avgobspred, scale. = T) # Do PCA with scaling
+drugdat5=data.frame(PC$x,avgobs$V1) # Create data frame for ggplot
+
+
+varex = data.frame(stringsAsFactors = F) # Variance Explained data frame
+
+for (i in 1:length(PC$sdev)){
+  varex[i,1] = PC$sdev[i]/sum(PC$sdev) # Find percent variance explained
+}
+
+varex = cbind(varex, c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")) # Add a labels column
+
+rownames(varex) = c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+colnames(varex) = c("PVE","Names") # Label data frame
+
+
+# plot variance explained
+ggplot(data = varex, aes(x = Names, y = PVE, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue')) +
+  labs(title = "Percent Variance Explained (Average All Drugs)", x = "Primary Components", y = "Percentage of Variance Explained")+
+  coord_cartesian(ylim=c(0, .3)) + 
+    scale_y_continuous(breaks=seq(0, .3, 0.05)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(PVE, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+
+
+
+# Plot by average drug
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+ 
+  ggtitle("PCA Scaled/Avg Data (All Drugs)")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = 'Classifications')
+
+
+#Plot by average drug with seaparate CX and TopoIIs
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  scale_color_manual(values = c("black","black", "black", "black", "black", "black", "black", "black", "black", "black", "red", "black", "blue", "black","blue", "blue", "black", "black", "black", "black", "black", "blue", "black", "black", "black", "black", "black", "black", "black", "black", "black", "black")) +
+  ggtitle("PCA Avg Labeled (All Drugs)") +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = "Classifications")
+
+
+
+
+# Plot only DNA damage and transcription/translation drugs
+combined2 = combined[-grep("MSD", combined$Classifiers),]
+combined2 = combined2[-grep("Epigenic", combined2$Classifiers),]
+combined2 = combined2[-grep("NB", combined2$Classifiers),] # Get rid of nonDNA damage/transcription/translation drugs
+
+Classifier = combined2[,14] # Create classifiers vector
+
+predictors = combined2[,-(1:3)]
+predictors = predictors[,-(9:11)] # Isolate predictors
+
+
+PC = prcomp(predictors, scale. = T) # Do PCA with scaling
+drugdat5=data.frame(PC$x,combined2$Classifiers) # Create data frame for ggplot
+
+
+# Variance explained
+varex = data.frame(stringsAsFactors = F) # Variance Explained data frame
+
+for (i in 1:length(PC$sdev)){
+  varex[i,1] = PC$sdev[i]/sum(PC$sdev) # Find percent variance explained
+}
+
+varex = cbind(varex, c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")) # Add a labels column
+
+rownames(varex) = c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+colnames(varex) = c("PVE","Names") # Label data frame
+
+
+# plot variance explained
+ggplot(data = varex, aes(x = Names, y = PVE, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue')) +
+  labs(title = "Percent Variance Explained (All DNA/CDD)", x = "Primary Components", y = "Percentage of Variance Explained")+
+  coord_cartesian(ylim=c(0, .3)) + 
+    scale_y_continuous(breaks=seq(0, .3, 0.05)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(PVE, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+
+
+# All DNA Damage and Transcript/lation Drugs
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Classifier))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+ 
+  ggtitle("PCA Scaled Data (DNA Damage and Transciption/Translation)")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = 'Classifications')
+
+
+# Separate CX and TopoII
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Classifier))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  scale_color_manual(values = c("black", "black", "black","blue", "red")) +
+  ggtitle("PCA Labeled (DNA Damage and Transciption/Translation)") +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = "Classifications")
+
+
+
+
+# Average observation for each drug
+avgobs = data.frame(stringsAsFactors = F) # Create storage data frame
+
+for (i in 1:length(DrugVec)){
+  
+  avgobs[i,1] = DrugVec[i] # Store which drug is on the row
+  
+  for (j in 4:11){
+    avgobs[i,j-2] = mean(combined2[grep(DrugVec[i], combined2$drug), j]) # Find averages for each drug
+  }
+}
+
+avgobs = na.omit(avgobs) # Get rid of drugs that have no observations
+Drug = avgobs[,1] # Make a drug vector
+avgobspred = avgobs[,-1] # Isolate predictors
+
+PC = prcomp(avgobspred, scale. = T) # Do PCA with scaling
+drugdat5=data.frame(PC$x,avgobs$V1) # Create data frame for ggplot
+
+
+varex = data.frame(stringsAsFactors = F) # Variance Explained data frame
+
+for (i in 1:length(PC$sdev)){
+  varex[i,1] = PC$sdev[i]/sum(PC$sdev) # Find percent variance explained
+}
+
+varex = cbind(varex, c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")) # Add a labels column
+
+rownames(varex) = c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+colnames(varex) = c("PVE","Names") # Label data frame
+
+
+# plot variance explained
+ggplot(data = varex, aes(x = Names, y = PVE, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue')) +
+  labs(title = "Percent Variance Explained (Average DNA/CDD)", x = "Primary Components", y = "Percentage of Variance Explained")+
+  coord_cartesian(ylim=c(0, .3)) + 
+    scale_y_continuous(breaks=seq(0, .3, 0.05)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(PVE, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+
+
+
+# Plot by average drug
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+ 
+  ggtitle("PCA Scaled/Avg Data (DNA Damage and Transciption/Translation)")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = 'Classifications')
+
+
+#Plot by average drug with seaparate CX and TopoIIs
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  scale_color_manual(values = c("black","black", "black", "black", "black", "black", "black", "black", "red", "black", "blue", "blue", "blue", "black", "black", "blue", "black", "black")) +
+  ggtitle("PCA Avg Labeled (DNA Damage and Transciption/Translation)") +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = "Classifications")
+
+
+
+
+# Plot only DNA damage drugs
+
+# DNA Damage only
+combined2 = combined2[-grep("CDD", combined2$Classifiers),] # Get rid of transcription/translation drugs
+Classifier = combined2[,14] # Make classifier vector
+
+predictors = combined2[,-(1:3)]
+predictors = predictors[,-(9:11)] # Isolate predictors
+
+PC = prcomp(predictors, scale. = T) # Do PCA with scaling
+drugdat5=data.frame(PC$x,combined2$Classifiers) # Create data frame for ggplot
+
+
+# Variance explained
+varex = data.frame(stringsAsFactors = F) # Variance Explained data frame
+
+for (i in 1:length(PC$sdev)){
+  varex[i,1] = PC$sdev[i]/sum(PC$sdev) # Find percent variance explained
+}
+
+varex = cbind(varex, c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")) # Add a labels column
+
+rownames(varex) = c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+colnames(varex) = c("PVE","Names") # Label data frame
+
+
+# plot variance explained
+ggplot(data = varex, aes(x = Names, y = PVE, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue')) +
+  labs(title = "Percent Variance Explained (All DNA)", x = "Primary Components", y = "Percentage of Variance Explained")+
+  coord_cartesian(ylim=c(0, .3)) + 
+    scale_y_continuous(breaks=seq(0, .3, 0.05)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(PVE, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+
+
+
+# All DNA Damage Drugs
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Classifier))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+ 
+  ggtitle("PCA Scaled Data (DNA Damage)")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = 'Classifications')
+
+
+# Separate CX and TopoII
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Classifier))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  scale_color_manual(values = c("black", "black", "blue", "red")) +
+  ggtitle("PCA Labeled (DNA Damage)") +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = "Classifications")
+
+
+
+
+# Average DNA drugs
+avgobs2 = data.frame(stringsAsFactors = F) # Create storage data frame
+
+for (i in 1:length(DrugVec)){
+  
+  avgobs2[i,1] = DrugVec[i] # Store which drug is on the row
+  
+  for (j in 4:11){
+    avgobs2[i,j-2] = mean(combined2[grep(DrugVec[i], combined2$drug), j]) # Find mean for each drug
+  }
+}
+
+avgobs2 = na.omit(avgobs2) # Get rid of drugs with no observations
+Drug = avgobs2[,1] # Make drug vector
+avgobspred2 = avgobs2[,-1] # Isloate predictors
+
+PC = prcomp(avgobspred2, scale. = T) # Do PCA with scaling
+drugdat5=data.frame(PC$x,avgobs2$V1) # Create data frame for ggplit
+
+varex = data.frame(stringsAsFactors = F) # Variance Explained data frame
+
+for (i in 1:length(PC$sdev)){
+  varex[i,1] = PC$sdev[i]/sum(PC$sdev) # Find percent variance explained
+}
+
+varex = cbind(varex, c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")) # Add a labels column
+
+rownames(varex) = c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+colnames(varex) = c("PVE","Names") # Label data frame
+
+
+# plot variance explained
+ggplot(data = varex, aes(x = Names, y = PVE, fill = Names)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue', 'Blue')) +
+  labs(title = "Percent Variance Explained (Average DNA)", x = "Primary Components", y = "Percentage of Variance Explained")+
+  coord_cartesian(ylim=c(0, .3)) + 
+    scale_y_continuous(breaks=seq(0, .3, 0.05)) +
+  theme(legend.position='none')+
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0), size = 20, face = "bold"))+
+  theme(axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 20, face = "bold"))+
+  geom_text(aes(label=round(PVE, digits = 3)), vjust=-0.3, size=6)+
+  theme(axis.text.x = element_text(size = 15, face = "bold"))+
+   theme(axis.text.y = element_text(size = 15, face = "bold"))
+
+
+# Plot by average drug
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+ 
+  ggtitle("PCA Scaled/Avg Data (DNA Damage)")  +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  labs(fill = 'Classifications')
+
+
+# Separate CX and TopoII
+ggplot(drugdat5,aes(x=PC1,y=PC2,col=Drug))+
+  geom_point(size=8,alpha=1)+ 
+  theme(axis.text.y=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.text.x=element_text(colour="black",size=15, face = "bold"))+
+  theme(axis.title.y=element_text(size=20, face = "bold"))+
+  theme(axis.title.x=element_text(size=20, face = "bold"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.border = element_blank())+
+  theme(panel.background = element_blank())+
+  theme(axis.line = element_line(colour = "black",size=1))+
+  scale_color_manual(values = c("black","black", "black", "black", "black", "black", "black", "red", "blue", "blue", "blue", "black", "black", "blue", "black")) +
+  theme(plot.title = element_text(hjust = 0.5, size = 25,face = "bold"))+
+  ggtitle("PCA Avg Labeled (DNA Damage)") +
+  labs(fill = "Classifications")
+
+
+
+
+
+# Put DNA drugs back in
+combined = rbind(QCData, CX5461) # Put CX back in the data frame
+predictors = combined[,-(1:3)]
+predictors = predictors[,-(9:11)] # Isolate predictors
+
+
+```
